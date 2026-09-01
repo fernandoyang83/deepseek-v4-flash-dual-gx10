@@ -1,0 +1,19 @@
+{
+  "_comment": "第二个 profile 的示范：同一套工具指向另一个模型。GLM-5.3-Flash EXL3 4bpw，跑在同样的双 GX10 上，但配方、并发上限、投机方式都和 dsv4f 不同。对照 dsv4f.json 看有哪些是必改的。",
+
+  "endpoint": "http://127.0.0.1:8090",
+  "model": "glm-5.3-flash",
+  "container": "vllm_glm53",
+
+  "_max_num_seqs": "生产默认 4，比 dsv4f 的 6 更低。并发守卫读这个值——压测超过它测到的是突发尾巴效应而非引擎容量。调优期需要更高时用环境变量临时覆盖，不必改这里：MAX_NUM_SEQS=8 PROFILE=glm53 ./measure-prefill.py ttft",
+
+  "max_num_seqs": 4,
+
+  "_speculative": "用 DFlash2 独立草稿模型，k=7——和 dsv4f 的 DSpark k=5 是不同机制（后者是 MTP 类）。这里逐位接受率不随深度衰减，所以 k 能开到 7 而仍然赚钱。设 true 只是让工具去采集接受长度；非投机模型设 false 即可跳过。",
+
+  "speculative": true,
+
+  "_reference": "故意留空。这个部署已有的四项数字是用另一套提示词测的，和 bench-baseline.py 里固化的那四条不是同一组——混填会正好犯下笔记方法论第 6 条说的错误（换了提示词就不再是同一个基准，见 docs/deployment-notes.md 第 10 节）。留空时 bench-baseline.py 不打印偏差列，等它在本部署上跑出自己的基线再填。",
+
+  "reference": {}
+}

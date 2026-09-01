@@ -1,0 +1,30 @@
+# 凭据 —— 注意通配符必须覆盖备份文件名。
+# 原部署仓库的 .gitignore 只写了 `.env.dspark`，匹配不到
+# `.env.dspark.bak.20260830-202002` 这类文件，13 个含 HF token 的
+# 备份因此处于"未跟踪但未被忽略"状态，`git add -A` 会全部提交。
+.env
+.env.*
+*.env
+!config/env.dspark.example
+
+# 备份与临时文件
+*.bak
+*.bak.*
+*~
+*.orig
+*.rej
+
+# 密钥
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*.p12
+
+# 日志与缓存
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+vllm-cache/
+/models/

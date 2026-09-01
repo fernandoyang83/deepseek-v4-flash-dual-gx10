@@ -1,0 +1,64 @@
+NOTICE
+======
+
+本仓库包含多个来源的内容，许可不统一。按文件说明如下。
+
+This repository contains material from several sources under different
+licenses. Breakdown by file:
+
+
+原创内容（MIT，见 LICENSE）
+---------------------------------------------------------------------------
+Original to this repository — MIT, Copyright (c) 2026 Fernando Qi
+
+  docs/deployment-notes.md      部署笔记与实测数据
+  README.md
+  CHANGELOG.md
+  scripts/bench-baseline.py     单流基线工具
+  scripts/loadtest.py           并发压测工具
+  patches/README.md             Patch A 的安装与实测说明
+
+
+衍生自上游 recipe（MIT）
+---------------------------------------------------------------------------
+Derived from tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark
+MIT, Copyright (c) 2026 Tony Deangelo
+
+  scripts/dsv4f-launch.sh       在上游启动流程基础上重写了自检部分
+  scripts/keepalive.sh
+  config/env.dspark.example     基于上游 .env.dspark.example，值按本部署调整
+  CREDITS.md                    上游归属清单，本仓库补充了衍生说明
+
+  上游仓库：
+  https://github.com/tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark
+
+
+vLLM 衍生（Apache-2.0）
+---------------------------------------------------------------------------
+Derived from the vLLM project — Apache License 2.0
+Copyright contributors to the vLLM project
+
+  patches/dspark_proposer.py
+
+  这是 vllm/v1/spec_decode/dspark_proposer.py 的修改版本，文件头部保留了
+  原始 SPDX 标识：
+
+      # SPDX-License-Identifier: Apache-2.0
+      # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+  上游 recipe 的 CREDITS.md 亦明确：vLLM overlay 文件 "retain their
+  Apache-2.0 lineage from the upstream sources and Keys' patch repo"。
+
+  DSpark 并发工作来自 Keys / drowzeys：
+  https://github.com/drowzeys/Keys-Concurrency-Patch-for-DSpark-DeepSeek-V4-Flash
+
+  Apache-2.0 全文：https://www.apache.org/licenses/LICENSE-2.0
+
+
+不在本仓库内，但部署时会用到
+---------------------------------------------------------------------------
+Not distributed here — separate upstream artifacts with their own terms:
+
+  模型权重  deepseek-ai/DeepSeek-V4-Flash-0731
+  基础镜像  vllm-dspark-runtime 的 stage A/B/C 来源
+  CUDA / NCCL / FlashInfer / TileLang / Triton

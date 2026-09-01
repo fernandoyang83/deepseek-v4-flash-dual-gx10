@@ -1,0 +1,21 @@
+{
+  "_comment": "DeepSeek-V4-Flash-0731 双 GX10。换模型时复制这个文件改值即可。",
+
+  "endpoint": "http://127.0.0.1:8078",
+  "model": "deepseek-v4-flash",
+  "container": "dsv4f-vllm-dspark-1",
+
+  "_max_num_seqs": "引擎的并发硬上限。压测超过它测到的是突发尾巴效应，不是引擎容量。",
+  "max_num_seqs": 6,
+
+  "_speculative": "使用 DSpark 投机解码 k=5，所以采集接受长度。非投机模型设 false。",
+  "speculative": true,
+
+  "_reference": "四项标准测试的现行基准（2026-08-30，3 次中位数）。08-25 那组已停用，见笔记第 5.2 节。",
+  "reference": {
+    "count": 85.5,
+    "struct": 74.6,
+    "code": 71.6,
+    "prose": 36.8
+  }
+}

@@ -1,0 +1,8 @@
+# 这些脚本在 Linux 上运行。CRLF 会让 shebang 变成
+# `#!/usr/bin/env bash\r`，报 "bad interpreter: no such file or directory"。
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
