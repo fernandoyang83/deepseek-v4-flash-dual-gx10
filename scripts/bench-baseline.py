@@ -13,9 +13,11 @@
 配置见 _common.py：PROFILE / ENDPOINT / MODEL 等。
 参考基线来自 profile；没有基线时不打印偏差列，换个模型也能直接用。
 """
+import json
+import os
 import sys
 
-from _common import CFG, banner, chat, md_table
+from _common import CFG, banner, chat, chat_text, md_table
 
 # 规范提示词 —— 与 dsv4f-launch.sh 的 bench() 逐字相同，也是产生笔记
 # 第 5 节基线的那一组。改动任何一条都会让历史数据失去可比性。
@@ -77,6 +79,78 @@ def bench(emit_md):
         print(md_table(headers, rows))
 
 
+# 正确性比对用的固定提示词。刻意选可判对错、且输出短而确定的题目。
+VERIFY_PROMPTS = {
+    "arith":  "What is 127 multiplied by 43? Reply with only the number.",
+    "primes": "List the first 5 prime numbers, comma separated, no other text.",
+    "logic":  "A farmer has 17 sheep. All but 9 run away. How many are left? "
+              "Explain in one sentence.",
+    "recall": "What is the chemical symbol for gold? Reply with only the symbol.",
+}
+# 选题标准：**短、答案唯一、指令无歧义、且不存在近似平局**。四条都要满足。
+#
+# 2026-09-02 标定：这四条各连跑 8 次，每条都只产生 1 种输出 —— 本部署在
+# temperature=0 下是可复现的，逐字比对这个方法成立。但选题极易踩坑：
+#
+# 被淘汰的两条，说明这个标准不是形式主义：
+#
+# - "写一个合并有序列表的函数"：同一配置连跑两次，第 788 字符处稳定出现
+#   docstring 空行差异。长自由生成本身就不确定，用它比对会产生假阳性
+#   —— 这正是 2026-09-02 评估 B12X 稀疏索引器时误报"输出不一致"的原因。
+# - "续写 2, 4, 8, 16 五个数"：模型有时回显原序列、有时只给续写部分。
+#   指令有歧义，不是数值问题。
+# - "列 5 个大于 100 的素数"：三次给出三组都正确但不同的答案
+#   （101.. / 103.. / 1009..）。**答案正确不等于答案唯一** —— 这条最隐蔽，
+#   看着像个精确的题目，实际有无穷多个正确解。
+# - "255 的十六进制"：8 次里 'ff' 和 'FF' 各 4 次。答案唯一、指令也无歧义，
+#   但**大小写构成了一个近似平局**，贪心解码在这种地方会翻转。
+VERIFY_FILE = os.path.expanduser("~/.dsv4f-verify-%s.json")
+
+
+def verify(save):
+    """比对输出与基准，用于换内核/换开关后确认没有算错。
+
+    首次用 --save 存基准；之后每次改配置跑一遍，逐字比对。
+    温度 0、不加 nonce，所以输出应当逐字可复现。
+    """
+    banner()
+    path = VERIFY_FILE % CFG.get("model", "model")
+    ref = {}
+    if not save:
+        try:
+            ref = json.load(open(path, encoding="utf-8"))
+        except OSError:
+            print(f"没有基准文件 {path}")
+            print("先跑一次 verify --save 建立基准。")
+            sys.exit(1)
+
+    cur, bad = {}, 0
+    for name, prompt in VERIFY_PROMPTS.items():
+        cur[name] = chat_text(prompt, 256)
+        if save:
+            print(f"  {name:7s} {cur[name][:70]!r}")
+            continue
+        same = cur[name] == ref.get(name)
+        print(f"  {name:7s} {'一致' if same else '不一致'}")
+        if not same:
+            bad += 1
+            a, b = ref.get(name, ""), cur[name]
+            i = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y),
+                     min(len(a), len(b)))
+            print(f"    首个差异在第 {i} 字符（基准 {len(a)} 字 / 现在 {len(b)} 字）")
+            print(f"    基准 ...{a[max(0, i-50):i+50]!r}")
+            print(f"    现在 ...{b[max(0, i-50):i+50]!r}")
+
+    if save:
+        json.dump(cur, open(path, "w", encoding="utf-8"), ensure_ascii=False)
+        print()
+        print(f"基准已保存 -> {path}")
+    else:
+        print()
+        print("全部一致" if bad == 0 else f"{bad} 项不一致")
+        sys.exit(1 if bad else 0)
+
+
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     emit_md = "--md" in sys.argv
@@ -86,6 +160,8 @@ if __name__ == "__main__":
         warmup()
     elif mode == "bench":
         bench(emit_md)
+    elif mode == "verify":
+        verify("--save" in sys.argv)
     else:
         print(__doc__)
         sys.exit(1)

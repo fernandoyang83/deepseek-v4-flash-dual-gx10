@@ -92,6 +92,24 @@ def chat(prompt, max_tokens, temperature=0.0, prefix_nonce=True, timeout=900):
             "tps": u["completion_tokens"] / dt if dt else 0.0}
 
 
+def chat_text(prompt, max_tokens=256, temperature=0.0, timeout=900):
+    """返回模型输出的文本本身，用于正确性比对。
+
+    与 chat() 的区别：chat() 只返回计时指标，做不了输出比对。默认不加
+    nonce —— 比对要求逐字可复现，而 nonce 会改变提示词。
+    """
+    body = json.dumps({
+        "model": CFG["model"], "stream": False,
+        "max_tokens": max_tokens, "temperature": temperature,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+    req = urllib.request.Request(CFG["url"], data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.load(r)
+    return d["choices"][0]["message"].get("content") or ""
+
+
 def chat_ttft(prompt, max_tokens, temperature=0.0, prefix_nonce=True, timeout=900):
     """流式请求，测 TTFT（首个 chunk 到达时间）。
 
@@ -191,12 +209,14 @@ def long_prompt(target_tokens):
     """生成约 target_tokens 个 token 的确定性长提示词。
 
     内容固定，保证跨次可重复；实际 token 数由响应里的 prompt_tokens 为准。
-    经验值：这段英文约 0.75 token/词，按 4 字符 ≈ 1 token 估算。
+    2026-09-02 标定：这段英文实测 **5.26 字符 ≈ 1 token**。
+    系数 4 只得目标的 76%，系数 3 只得 57%（两次实测反推一致）。
+    实际 token 数仍以响应里的 prompt_tokens 为准。
     """
     para = ("The scheduler assigns each request a token budget per step, and "
             "chunked prefill splits long prompts across multiple steps so that "
             "decode requests are not starved. ")
-    reps = max(1, int(target_tokens * 4 / len(para)))
+    reps = max(1, int(target_tokens * 5.26 / len(para)))
     return para * reps + "\n\nSummarize the paragraph above in one sentence."
 
 
