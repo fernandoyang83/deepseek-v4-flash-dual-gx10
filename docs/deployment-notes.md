@@ -532,9 +532,21 @@ consider extending warmup to cover this shape/config.
 
 **但它不是上述开销的成因** —— JIT 是一次性的，而三轮 TTFT 离散度只有 0.4%（若是 JIT，首轮应明显更慢）。扩展预热形状可以消除首次请求的尖峰，收益有限。
 
-#### 仍未测：长预填充对短请求的阻塞
+#### 长预填充对短请求的阻塞
 
-`measure-prefill.py blocking` 模式尚未运行。这是判断第 8.4 节那两个预填充调度参数值不值的唯一依据 —— 那节从源码推出了 `long_prefill_token_threshold` 的机制（每步 token 硬上限，8 步变 59 步），但**"短请求实际被堵多久"这一侧从未量过**。见 [TODO 第 2 项](../TODO.md)。
+2026-09-02 实测，`measure-prefill.py blocking`。空闲时短请求 TTFT 中位 0.17–0.18s。
+
+| 长请求在途 | 生产配置（阈值 1024）| 不设阈值时 |
+|---|---|---|
+| 6,102 tok | 1.54s（8.4×）| 2.90s（17.4×）|
+| 24,360 tok | 1.59s（8.7×）| 11.42s（68.4×）|
+| 76,068 tok | **1.69s（9.2×）** | 38.12s（**228.6×**）|
+
+**不设阈值时，短请求几乎完整地等长请求预填充完** —— 76K 在途时要等 38.1s，而那条长请求自己的 TTFT 是 38.9s，重叠 98%。日志里能直接看到 `Running: 1 reqs, Waiting: 1 reqs`：短请求卡在等待队列，一次都没被调度进去。**分块预填充在这个场景下没有起到让路作用。**
+
+而且阻塞**随长度超线性增长**（17× → 68× → 229×，token 只增长 12 倍），说明是完全串行。
+
+**这一项直接推翻了第 8.4 节原先"不需要该参数"的结论**，详见该节的完整权衡。
 
 ### 5.7 KV 池：期望值与噪声
 
@@ -800,40 +812,89 @@ docker logs --tail=300 dsv4f-vllm-dspark-1 2>&1 | grep -E "Waiting: [1-9]|Preemp
 
 **副产品**：目标侧捕获尺寸从 12 档砍到 7 档时，drafter 的 `[1,2,4,6]` 纹丝不动，日志同步报告 `target sizes stay [...]`。`_DrafterCompilationConfigView` 确实做到了它声称的隔离。
 
-### 8.4 已证伪：预填充调度两参数
+### 8.4 预填充调度两参数：一个是死的，一个是生产配置
 
 ```
---long-prefill-token-threshold 1024
---max-num-partial-prefills 1
+--max-num-partial-prefills 1        # 死参数，不要设
+--long-prefill-token-threshold 1024 # 已采纳，2026-09-02 起进入生产
 ```
 
-抄自上游的 sparkrun port，原本理解为"限制长预填充同时只有一个"。**读源码发现两条都不成立：**
+抄自上游 sparkrun port 时，两条都被理解为"限制长预填充同时只有一个"。读源码加实测之后，**两条的结论完全不同**。
 
-**① `max_num_partial_prefills` 在 V1 上是死参数。**
-`grep -rn max_num_partial_prefills /opt/env/…/vllm/v1/` **零命中** —— 它只存在于 V0 代码路径，而本部署跑的是 V1（启动日志 `Initializing a V1 LLM engine`）。它的默认值本来也就是 1，所以是双重无效。
+#### ① `max_num_partial_prefills` 在 V1 上是死参数
 
-**② `long_prefill_token_threshold` 不是并发限制，是每步每请求的 token 硬上限。**
+`grep -rn max_num_partial_prefills .../vllm/v1/` **零命中** —— 只存在于 V0 代码路径，而本部署跑 V1（启动日志 `Initializing a V1 LLM engine`）。默认值本来就是 1，双重无效。**这条判断从头到尾正确。**
+
+#### ② `long_prefill_token_threshold` 是活的，而且默认永远不生效
+
+它在 V1 调度器里被真实使用（`v1/core/sched/scheduler.py:390`）：
 
 ```python
-num_new_tokens = request.num_tokens - num_computed_tokens
-threshold = self.scheduler_config.long_prefill_token_threshold
-if 0 < threshold < num_new_tokens:
-    num_new_tokens = threshold
+if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:
+    num_new_tokens = self.scheduler_config.long_prefill_token_threshold
 ```
 
-两处使用点逻辑相同，且**不受 `max_num_partial_prefills` 门控**。
+**每步每请求的 token 硬上限**，不是并发限制 —— 参数名描述的是意图，不是行为。
 
-设 1024 的真实后果：6 万 token 的提示词从每步 8192（受 `max_num_batched_tokens` 限）降到每步 1024，**约 8 步变约 59 步**。
+**但它的自动赋值路径被前面那个死参数堵住了**（`config/scheduler.py:244`）：
 
-它确实能让短交互不被长预填充堵死 —— 每步只吃 1024 预算，剩下 7168 留给别的请求。代价是把预填充切得更碎，每步的固定开销要多付约 7 倍。
+```python
+if self.max_num_partial_prefills > 1:          # V1 上永远不成立
+    if self.long_prefill_token_threshold == 0:
+        self.long_prefill_token_threshold = int(max_model_len * 0.04)
+```
 
-> **2026-09-02 更新**：原先这里写的代价是"放弃了预填充随深度变快的特性（8K→1,513、100K→2,639 tok/s）"。那组数字来自上游，**本机实测已证伪** —— 预填充在 8K 之后走平在约 2,000 tok/s，不存在要放弃的加速（见 [5.6](#56-预填充与-ttft)）。
->
-> 所以这个参数的代价比原先记的小，但**收益一侧仍未测量** —— "短请求实际被堵多久"还是空白（[TODO 第 2 项](../TODO.md)）。权衡的两侧现在一侧证伪、一侧未知，结论仍是"不设"，但理由变了。
+所以**不显式传参，它永远是 0（不生效）**。这解释了为什么它长期没被真正评估过：从外部行为看两个参数都"不起作用"，但成因不同 —— 一个是**代码不存在**，另一个是**代码存在但入口被堵死**。
 
-**结论：这是个延迟换吞吐的权衡，不是免费优化。**
+#### 实测权衡（2026-09-02，阈值 1024）
 
-> **参数名描述的是意图，不是行为。** `long_prefill_token_threshold` 听起来是"长预填充的判定阈值"，按名字理解会得出完全相反的收益判断。**决定要不要用一个参数之前，找到它被读取的那一行。**
+**收益：阻塞几乎消失，而且不再随长度增长**
+
+| 长请求在途 | 不设 | 设 1024 | 改善 |
+|---|---|---|---|
+| 6,102 tok | 2.90s（17.4×）| 1.54s（8.4×）| −47% |
+| 24,360 tok | 11.42s（68.4×）| 1.59s（8.7×）| −86% |
+| 76,068 tok | 38.12s（**228.6×**）| **1.69s（9.2×）** | **−96%** |
+
+（倍数相对空闲时短请求 TTFT 0.17–0.18s）
+
+**关键不是数值降低，是阻塞从"随长度爆炸"变成了常数。** 不设时 17× → 68× → 229×；设了之后 8.4× → 8.7× → 9.2× —— 文档大 12 倍，等待只多 10%。
+
+**代价：长请求 TTFT +28%**
+
+| prompt_tok | 不设 | 设 1024 | 变化 |
+|---|---|---|---|
+| 767 | 0.56s | 0.56s | 0% |
+| 6,102 | 3.17s | 3.82s | +21% |
+| 24,361 | 11.98s | 15.30s | +28% |
+| 76,068 | 38.88s | 49.66s | **+28%** |
+
+**单流基线不受影响**：84.8 / 77.9 / 74.0 / 36.5，四项全部在噪声内。**纯单流场景零代价，纯粹是并发行为的改变。**
+
+#### 结论：采纳
+
+牺牲一个本来就要等 39 秒的请求 11 秒，换另一个请求从 38 秒降到 1.7 秒。对 agent 混合负载这个交换很划算。
+
+**若你的负载永远是单流，则没有收益，只有 28% 的损失 —— 不要设。**
+
+#### 副产品：引擎的仪表因此变准了
+
+不设阈值时，`Avg prompt throughput` 在 100K 档报 7606 tok/s，但那其实是"整段预填充挤进一个 10 秒日志窗口"的产物（见 [5.6](#56-预填充与-ttft)）。设 1024 之后预填充摊平到多个窗口，四个长度档都稳定报 **7683 tok/s** —— 这个读数现在是真的速率了。
+
+#### 怎么启用
+
+上游的 compose 没有这个参数，需要自己加。本仓库 `config/env.dspark.example` 里给了 `LONG_PREFILL_THRESHOLD`，在 compose 的 `vllm serve` 参数段加一行：
+
+```yaml
+        --enable-chunked-prefill
+        ${LONG_PREFILL_THRESHOLD:+--long-prefill-token-threshold ${LONG_PREFILL_THRESHOLD}}
+```
+
+写成可选形式，**变量为空时完全不传，行为与不加改动时一致**。两台 compose 都要改（启动脚本会 rsync，但改动要在 head 侧先做）。
+
+验证方法是看启动日志的 `non-default args` 里有没有 `'long_prefill_token_threshold': 1024`。
+
+> **参数名描述的是意图，不是行为。** 决定要不要用一个参数之前，找到它被读取的那一行 —— 并且确认那一行**真的会被执行到**。这一节两次栽在这上面：第一次以为它是并发限制，第二次以为它不起作用。
 
 ### 8.5 已证伪：收窄 cudagraph 捕获尺寸
 
@@ -871,11 +932,13 @@ ${MAX_CUDAGRAPH_CAPTURE_SIZE:+--max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTU
 
 ### 8.6 明确不做
 
+> `long_prefill_token_threshold` 曾长期列在本表里。2026-09-02 实测后**已移出并进入生产配置**（短请求阻塞 −96%，代价长请求 TTFT +28%），见 [8.4](#84-预填充调度两参数一个是死的一个是生产配置)。同组的 `max_num_partial_prefills` 仍留在表内。
+
 | 项 | 理由 |
 |---|---|
 | k 改成 4 或 3 | 三条独立证据钉死 k=5（[4.3](#43-k5-是硬约束)） |
 | gmu 上到 0.80 / 0.85 | 竞赛实测 0.80 已在物理边缘。**注意口径**：0.7935 是记账**开**的值，等效关闭口径 0.7860 |
-| 预填充调度两参数 | 已证伪（[8.4](#84-已证伪预填充调度两参数)） |
+| `max_num_partial_prefills` | 已证伪，V1 上零引用（[8.4](#84-预填充调度两参数一个是死的一个是生产配置)） |
 | 收窄 cudagraph 捕获尺寸 | 已证伪（[8.5](#85-已证伪收窄-cudagraph-捕获尺寸)） |
 | 拉到 1M 上下文 | 客户端侧也是 524288，服务端拉大零收益；sparse MLA 还会多分配依赖最大长度的工作区 |
 | `VLLM_USE_B12X_MHC=1` | 竞赛 E9 启动即崩（`Can't export tensors that require gradient`） |
