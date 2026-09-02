@@ -44,10 +44,10 @@ gmu 0.7935 / cudagraph 记账 1 / fused-markov 1 / DRAFT_CAPTURE_SIZES auto
 
 | 内容 | 单流 tok/s | 接受长度 |
 |---|---|---|
-| count | 85.5 | 5.96 |
-| struct | 74.6 | — |
-| code | 71.6 | 5.41 |
-| prose | 36.8 | 2.5 |
+| count | 85.3 | 5.96 |
+| struct | 77.9 | — |
+| code | 74.1 | 5.41 |
+| prose | 36.7 | 2.5 |
 
 并发聚合吞吐（`MAX_NUM_SEQS=6` 是硬上限）：
 
