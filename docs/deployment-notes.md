@@ -279,7 +279,7 @@ cd "$REPO_DIR" && ./dsv4f-launch.sh      # REPO_DIR 是部署目录，默认 ~/s
 | `MAX_MODEL_LEN` | 1048576 | **524288** | 1M 上下文 TTFT 达 16 分钟，agent 场景不可用 |
 | `MAX_NUM_SEQS` | 12 | **6** | 配合 512K 上下文留 KV 余量 |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | **1** | cudagraph 内存计入 KV 分配，边缘不易 OOM。**必须同时上调 gmu**，否则 KV 池反而缩小（见 [8.2](#82-gmu-与-cudagraph-记账必须一起改)） |
-| `VLLM_DSPARK_FUSED_MARKOV_ARGMAX` | 0 | **1** | 避免物化词表大小的 Markov logits。实测中性，理论省显存带宽 |
+| `VLLM_DSPARK_FUSED_MARKOV_ARGMAX` | 0 | **1** | 避免物化词表大小的 Markov logits。2026-09-02 两侧各 5 轮实测**完全中性**（中位差 0.1%，KV 池差 0.5%），改回默认 0 是无损的 |
 | `VLLM_DSPARK_DRAFT_CAPTURE_SIZES` | 不存在 | **auto** | Patch A 的开关，解析为 `[1,2,4,6]`。**单流 +6%** |
 
 ### 4.2 四个不能动的
@@ -769,7 +769,7 @@ docker logs --tail=300 dsv4f-vllm-dspark-1 2>&1 | grep -E "Waiting: [1-9]|Preemp
 |---|---|---|
 | **Patch A** + `DRAFT_CAPTURE_SIZES=auto` | ✅ 保留 | **单流 +6%**，唯一确凿的性能收益 |
 | `ESTIMATE_CUDAGRAPHS=1` + gmu 0.7935 | ✅ 保留 | 换的是**正确性**（cudagraph 内存计入分配，边缘不易 OOM），KV +3~4% |
-| `FUSED_MARKOV_ARGMAX=1` | ✅ 保留 | 中性。保留理由是"理论省显存带宽 + 实测无害"，**不是"实测有收益"** |
+| `FUSED_MARKOV_ARGMAX=1` | ⚪ 中性 | 2026-09-02 两侧各 5 轮严格 A/B：中位 85.0 vs 85.1（差 **0.1%**），KV 池差 0.5%。**上游报的 +1.8% 在本机不成立，省显存带宽一说也无实测支撑。** 保留现状而非改回默认，只因改动无收益也无损失 |
 | 预填充调度两参数 | ❌ 证伪 | V1 上一个是死参数，另一个语义与名字相反 |
 | cudagraph 捕获尺寸收窄 | ❌ 证伪 | 完全中性，收益与代价都在噪声之下 |
 
