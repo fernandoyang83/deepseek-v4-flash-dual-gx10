@@ -69,13 +69,13 @@
 这四个值是本部署相对上游模板的核心偏离，**报任何性能数字时都必须同时说明它们**：
 
 ```
-gmu 0.7935 / cudagraph 记账 1 / fused-markov 1 / DRAFT_CAPTURE_SIZES auto
+gmu 0.8036 / cudagraph 记账 1 / fused-markov 1 / DRAFT_CAPTURE_SIZES auto
 ```
 
 对应的环境变量：
 
 ```bash
-GPU_MEMORY_UTILIZATION=0.7935
+GPU_MEMORY_UTILIZATION=0.8036
 VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
 VLLM_DSPARK_FUSED_MARKOV_ARGMAX=1
 VLLM_DSPARK_DRAFT_CAPTURE_SIZES=auto
@@ -275,7 +275,7 @@ cd "$REPO_DIR" && ./dsv4f-launch.sh      # REPO_DIR 是部署目录，默认 ~/s
 
 | 参数 | 模板默认 | 本部署 | 依据 |
 |---|---|---|---|
-| `GPU_MEMORY_UTILIZATION` | 0.85 | **0.7935** | 上游竞赛实测 0.80 是物理边缘。**注意口径**：本部署 cudagraph 记账开着，0.7935 等效于记账关闭时的 0.786，仍在边缘内。0.85 是未跟上竞赛结论的遗留值 |
+| `GPU_MEMORY_UTILIZATION` | 0.85 | **0.8036** | 上游竞赛实测 0.80 是物理边缘。**注意口径**：本部署 cudagraph 记账开着，0.8036 等效于记账关闭时的约 0.796，仍在边缘内。2026-09-02 从 0.7935 提上来，KV 池 +12.2%，单流/TTFT/正确性零变化，c6 压测无 OOM（[8.2](#82-gmu-与-cudagraph-记账必须一起改)）。0.85 是未跟上竞赛结论的遗留值 |
 | `MAX_MODEL_LEN` | 1048576 | **524288** | 1M 上下文 TTFT 达 16 分钟，agent 场景不可用 |
 | `MAX_NUM_SEQS` | 12 | **6** | 配合 512K 上下文留 KV 余量 |
 | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS` | 0 | **1** | cudagraph 内存计入 KV 分配，边缘不易 OOM。**必须同时上调 gmu**，否则 KV 池反而缩小（见 [8.2](#82-gmu-与-cudagraph-记账必须一起改)） |
@@ -359,7 +359,7 @@ dsv4-vllm-entrypoint serve deepseek-ai/DeepSeek-V4-Flash-0731 \
   --max-model-len 524288 \
   --max-num-seqs 6 \
   --max-num-batched-tokens 8192 \
-  --gpu-memory-utilization 0.7935 \
+  --gpu-memory-utilization 0.8036 \
   --enable-prefix-caching \
   --async-scheduling \
   --enable-chunked-prefill \
@@ -482,7 +482,7 @@ python3 scripts/bench-baseline.py bench    # 四项测试
 
 ### 5.6 预填充与 TTFT
 
-2026-09-02 本机实测，`measure-prefill.py ttft`，每档 3 次取中位数，生产四元组 `gmu 0.7935 / 记账 1 / fused-markov 1 / auto`。
+2026-09-02 本机实测，`measure-prefill.py ttft`，每档 3 次取中位数，四元组 `gmu 0.7935 / 记账 1 / fused-markov 1 / auto`（当时的生产值；后于同日提到 0.8036，实测 TTFT 无变化）。
 
 | prompt_tokens | TTFT 中位 | TTFT 范围 | 有效吞吐 |
 |---|---|---|---|

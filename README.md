@@ -21,7 +21,7 @@
 ## 现行生产配置
 
 ```
-gmu 0.7935 / cudagraph 记账 1 / fused-markov 1 / DRAFT_CAPTURE_SIZES auto
+gmu 0.8036 / cudagraph 记账 1 / fused-markov 1 / DRAFT_CAPTURE_SIZES auto
 ```
 
 | | |
